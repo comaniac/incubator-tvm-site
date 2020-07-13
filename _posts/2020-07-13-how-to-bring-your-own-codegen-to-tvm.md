@@ -17,13 +17,13 @@ To share the programming interface with widely used deep learning frameworks, ma
 
 In this post, we demonstrate how you, as a hardware backend provider, can easily leverage the Bring Your Own Codegen (BYOC) framework to integrate the kernel library/compiler/framework of your hardware device to TVM. The most important advantage of leveraging BYOC framework is that ***all related source files of your devices are self-contained, so the codegen/runtime of your devices are pluggable to the TVM code base.*** It means that 1) the TVM code base with your codegen would be upstream compatible, and 2) TVM users can choose to enable the codegen/runtime based on their needs.
 
-In the rest of this post, we first illustrate a scenario that you may need TVM with BYOC, follow by an overview of the BYOC compilation and runtime flows. Then, we step-by-step illustrate how to integrate a vendor library or an execution engine to TVM with BYOC with Intel DNNL (a.k.a. MKL-DNN, OneDNN) as a running example.
+In the rest of this post, we first illustrate a scenario that you may need TVM with BYOC, followed by an overview of the BYOC compilation and runtime flows. Then, we step-by-step illustrate how to integrate a vendor library or an execution engine to TVM with BYOC by using Intel DNNL (a.k.a. MKL-DNN, OneDNN) as a running example.
 
 ## Bring an ASIC Accelerator to TVM
 
 Let's first make a scenario to illustrate why you want to bring your accelerator to TVM and what features you can expect from the BYOC framework. If you are not sure whether your case is suitable for BYOC, you are welcome to raise a discussion at [discuss.tvm.ai](https://discuss.tvm.ai).
 
-Imagining that you just made an edge device platform with an ARM CPU and a fantastic accelerator that has achieved an amazing performance for common image classification models. In other words, your accelerator does well on Conv2D, ReLU, GEMM, and other widely used CNN operators.
+Imagining that you just made an edge device platform with an ARM CPU and a fantastic accelerator that has achieved amazing performance for common image classification models. In other words, your accelerator does well on Conv2D, ReLU, GEMM, and other widely used CNN operators.
 
 Unfortunately, object detection models are getting more and more popular as well, and your customers need to run both image classification and object detection models on your platform. Although your accelerator is capable of executing almost all operators in object detection models, one operator (e.g., non-maximum suppression, NMS) is missing.
 
@@ -34,7 +34,7 @@ Since TVM has multiple codegens for different backends, it is easy for the open 
 Your ASIC accelerator must have its own compilation flow. Usually, it could be one of the following cases:
 
 **Generate a graph representation and feed it to a graph engine**:
-You may have your own a graph engine that is capable of executing a graph (or a neural network model) on your accelerator. For example, both Intel DNNL and NVIDIA TensorRT use an engine to run a whole graph or a model, so that they are able to 1) reduce memory transaction between operators and 2) optimize graph execution with operator fusion.
+You may have your own graph engine that is capable of executing a graph (or a neural network model) on your accelerator. For example, both Intel DNNL and NVIDIA TensorRT use an engine to run a whole graph or a model, so that they are able to 1) reduce memory transaction between operators and 2) optimize graph execution with operator fusion.
 
 In order to achieve the above two optimizations, you may need to process the graph during the compilation time. For example, Conv2D and bias addition are two separate operators in TVM, but they may be one operator (Conv2D with bias addition capability) on your accelerator. In this case, you may want to optimize the graph by replacing the `conv2d - add` graph pattern to a `your_conv2d_with_bias` node.
 
@@ -178,7 +178,7 @@ def pattern_table():
 
 In the DNNL example, we implemented two patterns with different names so that we can easily recognize them in the codegen. Note that the patterns are implemented in the Relay pattern language. You can follow [this tutorial](https://tvm.apache.org/docs/langref/relay_pattern.html) to learn how to write your own patterns.
 
-With the pattern table, we can them use a Relay pass to perform the transformation from
+With the pattern table, we can then use a Relay pass to perform the transformation from
 
 ```
 %1 = nn.conv2d(%data, %weight, ...)

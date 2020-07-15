@@ -1,3 +1,4 @@
+
 ---
 
 layout: post
@@ -13,22 +14,22 @@ To free data scientists from worrying about the performance when developing a ne
 
 However, users have to learn a new programming interface when they attempt to work on a new kernel library or a device. As a result, the demand for a unified programming interface becomes more and more important to let all users and hardware backend providers stand on the same page.
 
-To share the programming interface with widely used deep learning frameworks, many hardware device providers have attempted to integrate their devices backend to TensorFlow. However, since TensorFlow does not provide an official backend interface for new backends, you have to hack the TensorFlow for registration, which involves many source file changes and makes the future maintenance difficult.
+To share the programming interface with widely used deep learning frameworks, many hardware device providers have attempted to integrate their device's backend to TensorFlow. However, since TensorFlow does not provide an official backend interface for new backends, you have to hack TensorFlow for registration, which involves many source file changes and makes the future maintenance difficult.
 
 In this post, we demonstrate how you, as a hardware backend provider, can easily leverage the Bring Your Own Codegen (BYOC) framework to integrate the kernel library/compiler/framework of your hardware device to TVM. The most important advantage of leveraging BYOC framework is that ***all related source files of your devices are self-contained, so the codegen/runtime of your devices are pluggable to the TVM code base.*** It means that 1) the TVM code base with your codegen would be upstream compatible, and 2) TVM users can choose to enable the codegen/runtime based on their needs.
 
-In the rest of this post, we first illustrate a scenario that you may need TVM with BYOC, followed by an overview of the BYOC compilation and runtime flows. Then, we step-by-step illustrate how to integrate a vendor library or an execution engine to TVM with BYOC by using Intel DNNL (a.k.a. MKL-DNN, OneDNN) as a running example.
+In the rest of this post, we first illustrate a scenario where you may need TVM with BYOC, followed by an overview of the BYOC compilation and runtime flows. Then, we step-by-step illustrate how to integrate a vendor library or an execution engine to TVM with BYOC by using Intel DNNL (a.k.a. MKL-DNN, OneDNN) as a running example.
 
 ## Bring an ASIC Accelerator to TVM
 
 Let's first make a scenario to illustrate why you want to bring your accelerator to TVM and what features you can expect from the BYOC framework. If you are not sure whether your case is suitable for BYOC, you are welcome to raise a discussion at [discuss.tvm.ai](https://discuss.tvm.ai).
 
-Imagining that you just made an edge device platform with an ARM CPU and a fantastic accelerator that has achieved amazing performance for common image classification models. In other words, your accelerator does well on Conv2D, ReLU, GEMM, and other widely used CNN operators.
+Imagine that you just made an edge device platform with an ARM CPU and a fantastic accelerator that has achieved amazing performance for common image classification models. In other words, your accelerator does well on Conv2D, ReLU, GEMM, and other widely used CNN operators.
 
 Unfortunately, object detection models are getting more and more popular as well, and your customers need to run both image classification and object detection models on your platform. Although your accelerator is capable of executing almost all operators in object detection models, one operator (e.g., non-maximum suppression, NMS) is missing.
 
 ### Let TVM execute unsupported operators
-Since TVM has multiple codegens for different backends, it is easy for the open source community to implement new operators on CPU or GPU in a short time. Ideally, if you integrate the compilation flow of your accelerator to TVM with BYOC, TVM will perform Relay graph partitioning to offload a part of the graph to your accelerator while keeping others on TVM. As a result, you can claim that your platform is capable of running all models without worrying about new operators.
+Since TVM has multiple codegens for different backends, it is easy for the open source community to implement new operators on CPU or GPU in a short time. If you integrate the compilation flow of your accelerator to TVM with BYOC, TVM will perform Relay graph partitioning to offload a part of the graph to your accelerator while keeping others on TVM. As a result, you can claim that your platform is capable of running all models without worrying about new operators.
 
 ### Customize graph-level optimization
 Your ASIC accelerator must have its own compilation flow. Usually, it could be one of the following cases:
@@ -36,14 +37,14 @@ Your ASIC accelerator must have its own compilation flow. Usually, it could be o
 **Generate a graph representation and feed it to a graph engine**:
 You may have your own graph engine that is capable of executing a graph (or a neural network model) on your accelerator. For example, both Intel DNNL and NVIDIA TensorRT use an engine to run a whole graph or a model, so that they are able to 1) reduce memory transaction between operators and 2) optimize graph execution with operator fusion.
 
-In order to achieve the above two optimizations, you may need to process the graph during the compilation time. For example, Conv2D and bias addition are two separate operators in TVM, but they may be one operator (Conv2D with bias addition capability) on your accelerator. In this case, you may want to optimize the graph by replacing the `conv2d - add` graph pattern to a `your_conv2d_with_bias` node.
+In order to achieve the above two optimizations, you may need to process the graph during the compilation time. For example, Conv2D and bias addition are two separate operators in TVM, but they may be one operator (Conv2D with bias addition capability) on your accelerator. In this case, you may want to optimize the graph by replacing the `conv2d - add` graph pattern with a `your_conv2d_with_bias` node.
 
 If your compilation flow falls into this case, then we recommend reading all the rest sections in this post but skipping [Bring DNNL to TVM: C Source Codegen](#bring-dnnl-to-tvm-c-source-codegen).
 
 **Generate assembly code and compile it to an executable binary**:
 If you do not have an end-to-end execution framework for your platform like the previous case, you may have a compiler to compile a program in assembly code of your ISA. In order to feed the assembly code to your compiler, you will need a codegen to generate and optimize the assembly code from a Relay graph.
 
-If your compilation flow falls into this case, then we recommend reading all the rest sections in this post but skipping [Bring DNNL to TVM: JSON Codegen/Runtime](#bring-dnnl-to-tvm-json-codegenruntime).
+If your compilation flow falls into this case, then we recommend reading all the rest of the sections in this post but skipping [Bring DNNL to TVM: JSON Codegen/Runtime](#bring-dnnl-to-tvm-json-codegenruntime).
 
 ## How BYOC Works
 
@@ -214,17 +215,39 @@ With the annotation rules from the previous step, we can now apply a list of BYO
 
 ```python
 mod = create_relay_module_from_model() # Output: Figure 1
+mod["main"] = bind_params_by_name(main["main"], params) # Optional
 mod = transform.MergeComposite(pattern_table)(mod)
 mod = transform.AnnotateTarget(["dnnl"])(mod) # Output: Figure 2
 mod = transform.MergeCompilerRegions()(mod) # Output: Figure 3
 mod = transform.PartitionGraph()(mod) # Output: Figure 4
 ```
-As can be seen, each Relay pass can be mapped to a step we have introduced in [How BYOC Works](#how-byoc-works). 
+As can be seen, each Relay pass can be mapped to a step we have introduced in [How BYOC Works](#how-byoc-works) except for `bind_params_by_name`, which is a TVM API that allows you to bind a model input variable to a constant tensor. In this way, we can serialize the constant tensor with the compiled module. For example, here is a simple Relay function with two inputs `%x` and `%y`:
+
+```python
+print(f)
+# fn (%x: Tensor[(8, 8), float32], %y: Tensor[(8, 8), float32]) {
+#   %0 = add(%x, %y);
+#   log(%0)
+# }
+```
+
+After binding `%x` with a constant tensor:
+
+```python
+f = bind_params_by_name(f, {"x": tvm.nd.array(ones)})
+print(f)
+# fn (%y: Tensor[(8, 8), float32]) {
+#   %0 = add(meta[relay.Constant][0], %y);
+#   log(%0)
+# }
+```
+
+For more Relay transformation use cases, you can refer to the test cases in [tests/python/relay/test_pass_partition_graph.py](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/tests/python/relay/test_pass_partition_graph.py).
 
 ## Bring DNNL to TVM: JSON Codegen/Runtime
 Now let's implement the DNNL codegen that serializes a Relay graph to a JSON representation, and then implement the DNNL JSON runtime to deserialize and execute the graph. *Note that if you attempt to implement a codegen to generate C-compatible programs, you may want to directly proceed to the next section.*
 
-To enable DNNL JSON codegen/runtime in TVM to work on this example, please make sure DNNL is available on your machine, and build the TVM with `set(USE_DNNL_CODEGEN ON)` in `config.cmake`.
+To enable DNNL JSON codegen/runtime in TVM to work on this example, please make sure DNNL is available on your machine, and build TVM with `set(USE_DNNL_CODEGEN ON)` in `config.cmake`.
 
 The DNNL codegen is implemented in [`src/relay/backend/contrib/dnnl/codegen.cc`](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc). Since we implemented DNNL codegen in both forms in this file for illustration purpose, you could focus on the part covered by `USE_JSON_RUNTIME` macro when tracing the code.
 
@@ -338,18 +361,18 @@ class DNNLJSONRuntime : public JSONRuntimeBase {
 }
 ```
 
-The `Init` function is in charge of building the DNNL engine by interpreting the JSON graph string (see [L93](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/runtime/contrib/dnnl/dnnl_json_runtime.cc#L93) for `BuildEngine`), and filling the constant weights to the corresponding data entry buffers (the `SetupConstant` is implemented in the JSON runtime base class so you only need to invoke it in `Init`). Note that this function will be called only once even we run multiple times of inferences.
+The `Init` function is in charge of building the DNNL engine by interpreting the JSON graph string (see [L93](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/runtime/contrib/dnnl/dnnl_json_runtime.cc#L93) for `BuildEngine`), and filling the constant weights to the corresponding data entry buffers (the `SetupConstant` is implemented in the JSON runtime base class so you only need to invoke it in `Init`). Note that this function will be called only once even we run multiple inferences.
 
 Next, the `Run` function ([L64](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/runtime/contrib/dnnl/dnnl_json_runtime.cc#L64)) first writes the input tensors, which may come from user inputs or constant weights, to the corresponding DNNL memory buffers we initialized when building the DNNL engine. Then launch the DNNL engine to execute the JSON graph. Finally, it writes the DNNL output memory buffers back to the corresponding output tensors.
 
-Since the rest implementation in DNNL JSON runtime are too DNNL specific to be dived into details in this post, we will stop here. We would like to emphasize that while the DNNL JSON runtime is a good reference to start with, your JSON runtime could be fully customized to fit your requirements.
+Since the rest of the implementation in DNNL JSON runtime are too DNNL specific to be dived into details in this post, we will stop here. We would like to emphasize that while the DNNL JSON runtime is a good reference to start with, your JSON runtime could be fully customized to fit your requirements.
 
 ## Bring DNNL to TVM: C Source Codegen
-Now let's implement the DNNL codegen that generates C source code which invokes DNNL APIs to execute the Relay graph.*Note that if you attempt to implement a codegen to generate other graph representation like in JSON format, you may want to read [Bring DNNL to TVM: JSON Codegen/Runtime](#bring-dnnl-to-tvm-json-codegenruntime) and skip this section.*
+Now let's implement the DNNL codegen that generates C source code which invokes DNNL APIs to execute the Relay graph.*Note that if you attempt to implement a codegen to generate other graph representations like in JSON format, you may want to read [Bring DNNL to TVM: JSON Codegen/Runtime](#bring-dnnl-to-tvm-json-codegenruntime) and skip this section.*
 
 To enable DNNL C source codegen in TVM to work on this example, please make sure DNNL is available on your machine, and build the TVM with `set(USE_DNNL_CODEGEN C_SRC)` in `config.cmake`.
 
-The DNNL codegen is implemented in [`src/relay/backend/contrib/dnnl/codegen.cc`](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc). Since we implemented DNNL codegen in both forms in this file for illustration purpose, you could focus on the part **NOT** covered by `USE_JSON_RUNTIME` macro when tracing the code.
+The DNNL codegen is implemented in [`src/relay/backend/contrib/dnnl/codegen.cc`](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc). Since we implemented DNNL codegen in both forms in this file for illustration purpose, you should focus on the part **NOT** covered by `USE_JSON_RUNTIME` macro when tracing the code.
 
 We first register the codegen with TVM registration API ([L510](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc#L510)). This registration makes TVM compile engine dispatch the Relay function with `Compiler=<your codegen>`  to `relay.ext.<your codegen>`. Then we implement the entry function of the DNNL compiler ([L490](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc#L490)):
 
@@ -450,10 +473,10 @@ TVM_DLL_EXPORT_TYPED_FUNC(dnnl_0, dnnl_0_wrapper_);
 
 Note that the pre-implemented op-based DNNL functions are in [src/runtime/contrib/dnnl/dnnl.cc](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/runtime/contrib/dnnl/dnnl.cc). 
 
-Since the rest implementation in [`src/relay/backend/contrib/dnnl/codegen.cc`](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc) are too DNNL specific to be dived into details in this post, we will stop here. The main idea is implementing a Relay graph visitor ([L138](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc#L138)) to visit the given Relay function and generate the above C code. As long as your codegen is able to generate the TVM runtime compatible C code, you can fully customize the codegen to fit your requirements.
+Since the rest of the implementation in [`src/relay/backend/contrib/dnnl/codegen.cc`](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc) are too DNNL specific to be dived into details in this post, we will stop here. The main idea is implementing a Relay graph visitor ([L138](https://github.com/apache/incubator-tvm/blob/8a0249cd4d12a2eb1a4e7a692a9265bc63fec5c8/src/relay/backend/contrib/dnnl/codegen.cc#L138)) to visit the given Relay function and generate the above C code. As long as your codegen is able to generate the TVM runtime compatible C code, you can fully customize the codegen to fit your requirements.
 
 ### C Source Compilation
-As you may have noticed, the output of `DNNLCompiler` is a module with the generated C code in text format, which has not been compiled by `gcc` to be executable binary. In fact, the generated C code will be compiled when users call `export_libray(mod)`, like the following code snippet:
+As you may have noticed, the output of `DNNLCompiler` is a module with the generated C code in text format, which has not been compiled by `gcc` to be an executable binary. In fact, the generated C code will be compiled when users call `export_libray(mod)`, like the following code snippet:
 
 ```python
 def update_lib(lib):
